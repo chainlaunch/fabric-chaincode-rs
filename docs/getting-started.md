@@ -40,9 +40,9 @@ fabric-shim = { git = "https://github.com/chainlaunch/fabric-chaincode-rust" }
 # or: fabric-shim = { path = "../fabric-chaincode-rust/fabric-shim" }
 ```
 
-> Building `fabric-shim` compiles protobuf definitions, which needs `protoc`
-> with the well-known types on your PATH: `brew install protobuf` on macOS,
-> `apt-get install protobuf-compiler libprotobuf-dev` on Debian/Ubuntu.
+> No `protoc` install needed — the generated protobuf bindings are committed
+> in the crate. `protoc` is only required if you enable the
+> `regenerate-protos` feature to refresh those bindings yourself.
 
 ## 2. Write the contract
 
@@ -144,8 +144,6 @@ Create a `Dockerfile`:
 
 ```dockerfile
 FROM rust:1-slim-bookworm AS build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    protobuf-compiler libprotobuf-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
 RUN cargo build --release

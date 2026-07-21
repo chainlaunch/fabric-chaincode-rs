@@ -1,9 +1,9 @@
 # Build from the workspace root:
 #   docker build -f examples/asset-transfer/Dockerfile -t chainlaunch/rust-cc-asset-transfer:0.1 .
 FROM rust:1-slim-bookworm AS build
-# libprotobuf-dev provides the well-known types (google/protobuf/*.proto)
-# that Debian's protobuf-compiler package does not ship.
-RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev && rm -rf /var/lib/apt/lists/*
+# No protoc needed: fabric-shim-protos builds from the bindings committed
+# under src/generated/ by default (see its build.rs / regenerate-protos
+# feature for the opt-in codegen path).
 WORKDIR /src
 COPY . .
 RUN cargo build --release -p asset-transfer

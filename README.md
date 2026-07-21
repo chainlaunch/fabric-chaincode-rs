@@ -101,8 +101,13 @@ cargo test --workspace          # unit + mock-peer integration tests
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Codegen runs at build time and needs `protoc` with the well-known types
-(macOS: `brew install protobuf`; Debian: `protobuf-compiler libprotobuf-dev`).
+No `protoc` needed — the generated protobuf bindings are committed under
+`fabric-shim-protos/src/generated/`. Only regenerating them after changing
+`fabric-shim-protos/protos/*.proto` needs `protoc` with the well-known types
+(macOS: `brew install protobuf`; Debian: `protobuf-compiler libprotobuf-dev`)
+and the `regenerate-protos` feature: `cargo build -p fabric-shim-protos
+--features regenerate-protos`, then copy the refreshed files from `OUT_DIR`
+over `src/generated/` and commit the diff.
 
 The integration tests (`fabric-shim/tests/mock_peer.rs`) run an in-process
 mock peer — a real gRPC client, like the Fabric peer in CCaaS mode — covering
@@ -126,6 +131,6 @@ then `/invoke` and `/query`) — nothing Rust-specific is required server-side.
 - [x] M1 protos + handshake, M2 stub surface, M3 example image
 - [x] M4 interop sign-off on a live ChainLaunch Fabric network (spec §7.4 checklist)
 - [x] High-level `#[contract]`/`#[derive(DataType)]` API with auto-generated `GetMetadata`
+- [x] Generated proto code committed — building this crate never needs `protoc` ([spec](docs/spec.md) §3.6)
 - [ ] M5 remaining: TLS via env-injected PEMs, state-based endorsement, load testing (see [spec](docs/spec.md) §6-8)
-- [ ] Commit generated proto code so downstream builds don't need `protoc` ([spec](docs/spec.md) §3.6)
 - [ ] Published to crates.io — currently a git/path dependency only

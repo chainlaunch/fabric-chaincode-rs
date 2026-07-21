@@ -13,4 +13,10 @@ tonic.workspace = true
 tonic-prost.workspace = true
 
 [build-dependencies]
-tonic-prost-build.workspace = true
+tonic-prost-build = { workspace = true, optional = true }
+
+[features]
+# Recompile the vendored .proto files instead of using the bindings
+# committed under src/generated/. Requires protoc + libprotobuf-dev.
+# Only needed when changing fabric-shim-protos/protos/.
+regenerate-protos = ["dep:tonic-prost-build"]

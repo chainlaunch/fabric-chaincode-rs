@@ -120,8 +120,9 @@ Status: not yet implemented — still open (see §8, item 2).
 
 ### 3.6 Proto generation
 
-- Vendor protos from `hyperledger/fabric-protos` (pin a release tag compatible with Fabric 3.x; 2.x peers are explicitly unsupported), generate with `tonic-build`/`prost-build` at build time; commit generated code so downstream users don't need `protoc`.
+- Vendor protos from `hyperledger/fabric-protos` (pin a release tag compatible with Fabric 3.x; 2.x peers are explicitly unsupported), generate with `tonic-build`/`prost-build`.
 - Required proto files: `peer/chaincode_shim.proto`, `peer/chaincode.proto`, `peer/chaincode_event.proto`, `peer/proposal.proto`, `peer/proposal_response.proto`, `common/common.proto`, `msp/identities.proto`, `ledger/queryresult/kv_query_result.proto`.
+- **Status: done.** Generated code is committed under `fabric-shim-protos/src/generated/` and used by default — `cargo build` needs no `protoc`. Regeneration is opt-in via the `regenerate-protos` feature (requires `protoc` + the well-known types), used only when the vendored `.proto` files change; CI verifies both the default (no-`protoc`) build and the opt-in regeneration path independently.
 
 ### 3.7 Packaging & distribution
 
