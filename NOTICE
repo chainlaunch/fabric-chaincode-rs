@@ -1,0 +1,8 @@
+fabric-chaincode-rust
+Copyright 2026 ChainLaunch
+
+This product includes protocol buffer definitions vendored from
+Hyperledger Fabric Protos (https://github.com/hyperledger/fabric-protos),
+Copyright the Hyperledger Fabric contributors, licensed under the
+Apache License, Version 2.0. The vendored files retain their original
+copyright and SPDX license headers under fabric-shim-protos/protos/.

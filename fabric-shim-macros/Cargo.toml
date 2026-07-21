@@ -1,0 +1,16 @@
+[package]
+name = "fabric-shim-macros"
+description = "Proc macros for fabric-shim: #[contract] transaction routing and #[derive(DataType)] schema generation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+heck = "0.5"

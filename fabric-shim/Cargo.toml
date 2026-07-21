@@ -1,0 +1,26 @@
+[package]
+name = "fabric-shim"
+description = "Hyperledger Fabric chaincode shim for Rust — chaincode-as-a-service (CCaaS) server for Fabric 3.x"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fabric-shim-macros.workspace = true
+fabric-shim-protos.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true

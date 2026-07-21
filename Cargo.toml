@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "fabric-shim-protos",
+    "fabric-shim-macros",
+    "fabric-shim",
+    "examples/asset-transfer",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/chainlaunch/fabric-chaincode-rust"
+rust-version = "1.85"
+
+[workspace.dependencies]
+fabric-shim-protos = { path = "fabric-shim-protos", version = "0.1.0" }
+fabric-shim-macros = { path = "fabric-shim-macros", version = "0.1.0" }
+fabric-shim = { path = "fabric-shim", version = "0.1.0" }
+
+prost = "0.14"
+prost-types = "0.14"
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "signal", "net", "time"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+futures = "0.3"
+async-trait = "0.1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
