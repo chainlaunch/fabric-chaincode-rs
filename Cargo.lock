@@ -19,7 +19,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "asset-transfer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "fabric-shim",
@@ -138,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "fabric-shim"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "fabric-shim-macros",
@@ -159,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "fabric-shim-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "fabric-shim-protos"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "prost",
  "prost-types",

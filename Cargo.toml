@@ -8,10 +8,13 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/chainlaunch/fabric-chaincode-rust"
+# Resolved relative to the workspace root (not each member's directory) for
+# fields inherited via `{ workspace = true }` — see each crate's Cargo.toml.
+readme = "README.md"
 rust-version = "1.85"
 
 [workspace.dependencies]

@@ -1,10 +1,12 @@
 [package]
 name = "fabric-shim"
 description = "Hyperledger Fabric chaincode shim for Rust — chaincode-as-a-service (CCaaS) server for Fabric 3.x"
+documentation = "https://docs.rs/fabric-shim"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
 
 [dependencies]
 fabric-shim-macros.workspace = true
