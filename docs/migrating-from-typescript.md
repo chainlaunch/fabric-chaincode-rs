@@ -1,7 +1,7 @@
 # Migrating from TypeScript (`fabric-chaincode-node`)
 
 *How-to guide — port a `fabric-contract-api` (TypeScript/JavaScript)
-chaincode to `fabric-chaincode-rust`.*
+chaincode to `fabric-chaincode-rs`.*
 
 The Rust contract API was designed to feel like the TypeScript decorators:
 one annotation per transaction, typed parameters, automatic metadata. Ledger

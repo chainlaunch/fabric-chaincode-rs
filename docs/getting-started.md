@@ -1,4 +1,4 @@
-# Getting Started with fabric-chaincode-rust
+# Getting Started with fabric-chaincode-rs
 
 *Tutorial — from zero to a Rust chaincode running on a Fabric 3.x network.*
 
@@ -25,19 +25,9 @@ Fabric's `ccaas` builder in general):
 
 ```bash
 cargo new my-chaincode && cd my-chaincode
-cargo add tokio --features macros,rt-multi-thread
+cargo add fabric-shim tokio --features tokio/macros,tokio/rt-multi-thread
 cargo add serde --features derive
 cargo add serde_json
-```
-
-`fabric-shim` is not on crates.io yet — depend on it by git (or path, if you
-have this repo checked out):
-
-```toml
-# Cargo.toml
-[dependencies]
-fabric-shim = { git = "https://github.com/chainlaunch/fabric-chaincode-rust" }
-# or: fabric-shim = { path = "../fabric-chaincode-rust/fabric-shim" }
 ```
 
 > No `protoc` install needed — the generated protobuf bindings are committed

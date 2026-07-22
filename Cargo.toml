@@ -11,7 +11,7 @@ members = [
 version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/chainlaunch/fabric-chaincode-rust"
+repository = "https://github.com/chainlaunch/fabric-chaincode-rs"
 # Resolved relative to the workspace root (not each member's directory) for
 # fields inherited via `{ workspace = true }` — see each crate's Cargo.toml.
 readme = "README.md"

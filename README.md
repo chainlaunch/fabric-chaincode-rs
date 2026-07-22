@@ -1,6 +1,6 @@
-# fabric-chaincode-rust
+# fabric-chaincode-rs
 
-[![CI](https://github.com/chainlaunch/fabric-chaincode-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/chainlaunch/fabric-chaincode-rust/actions/workflows/ci.yml)
+[![CI](https://github.com/chainlaunch/fabric-chaincode-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/chainlaunch/fabric-chaincode-rs/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/fabric-shim.svg)](https://crates.io/crates/fabric-shim)
 [![docs.rs](https://docs.rs/fabric-shim/badge.svg)](https://docs.rs/fabric-shim)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)

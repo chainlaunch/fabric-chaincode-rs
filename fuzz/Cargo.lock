@@ -127,7 +127,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fabric-chaincode-rust-fuzz"
+name = "fabric-chaincode-rs-fuzz"
 version = "0.0.0"
 dependencies = [
  "fabric-shim",

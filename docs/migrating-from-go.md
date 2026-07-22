@@ -1,6 +1,6 @@
 # Migrating from Go (`fabric-chaincode-go`)
 
-*How-to guide — port an existing Go chaincode to `fabric-chaincode-rust`.*
+*How-to guide — port an existing Go chaincode to `fabric-chaincode-rs`.*
 
 This guide maps both Go styles to Rust: the high-level
 `fabric-contract-api-go` (`contractapi.Contract`) and the low-level

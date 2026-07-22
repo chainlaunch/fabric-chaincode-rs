@@ -1,5 +1,5 @@
 [package]
-name = "fabric-chaincode-rust-fuzz"
+name = "fabric-chaincode-rs-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
