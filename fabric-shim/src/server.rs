@@ -5,6 +5,7 @@ use fabric_shim_protos::peer as pb;
 use fabric_shim_protos::peer::chaincode_server::{
     Chaincode as GrpcChaincode, ChaincodeServer as GrpcChaincodeServer,
 };
+use futures::TryStreamExt;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
@@ -93,9 +94,20 @@ impl Server {
             .max_decoding_message_size(self.max_message_size)
             .max_encoding_message_size(self.max_message_size);
 
+        // serve_with_incoming bypasses tonic's own listener setup (and its
+        // tcp_nodelay builder option with it), so Nagle's algorithm is on by
+        // default for accepted sockets. Every shim request/response is a
+        // small message expecting an immediate reply, which is exactly the
+        // pattern Nagle+delayed-ACK interaction stalls (~40ms per round
+        // trip) — set nodelay explicitly on each accepted connection.
+        let incoming = TcpListenerStream::new(listener).map_ok(|stream| {
+            let _ = stream.set_nodelay(true);
+            stream
+        });
+
         tonic::transport::Server::builder()
             .add_service(grpc)
-            .serve_with_incoming_shutdown(TcpListenerStream::new(listener), shutdown)
+            .serve_with_incoming_shutdown(incoming, shutdown)
             .await
             .map_err(|e| Error::Transport(e.to_string()))
     }

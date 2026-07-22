@@ -113,6 +113,52 @@ cargo +nightly fuzz run composite_key_roundtrip -- -max_total_time=3600
 - All of the above run in CI on every push and pull request — see
   [`ci.yml`](../.github/workflows/ci.yml) for the exact jobs and commands.
 
+## 5. Performance vs. the Go and TypeScript reference chaincodes
+
+[`scripts/benchmark.sh`](../scripts/benchmark.sh) extends the same real
+Fabric 3.1.5 network setup used for differential testing to a third
+chaincode — the official, unmodified `asset-transfer-basic/chaincode-typescript`
+— and times `peer chaincode invoke`/`query` latency against all three.
+
+**Read this caveat before the numbers**: this measures **end-to-end latency
+through the `peer chaincode` CLI** — process spawn, TLS handshake, gRPC to
+the peer, endorsement, the peer-to-chaincode RPC, and the response. It is
+*not* a microbenchmark of chaincode execution time alone; CLI/network
+overhead dominates at this scale, for a simple get/put workload. Treat the
+results as "these three chaincodes perform comparably under real Fabric
+traffic," not as a precise ranking of language execution speed. A rigorous
+benchmark would drive load from a persistent client (e.g. Hyperledger
+Caliper or a `fabric-gateway` SDK loop) instead of spawning a CLI process
+per call — that's a documented gap, not a hidden one.
+
+Results from a local run (`./scripts/benchmark.sh 30`, N=30 per operation):
+
+| Chaincode | Op | mean (ms) | p50 | p95 | ops/s |
+|---|---|---|---|---|---|
+| Go (`chaincode-external`) | query | 40.3 | 36.0 | 100.9 | 24.8 |
+| Go | invoke | 43.5 | 43.1 | 51.6 | 23.0 |
+| **Rust (`fabric-shim`)** | query | 36.1 | 36.0 | 39.5 | 27.7 |
+| **Rust** | invoke | 46.6 | 42.6 | 55.7 | 21.5 |
+| TypeScript (`chaincode-typescript`) | query | 36.6 | 35.5 | 40.7 | 27.3 |
+| TypeScript | invoke | 45.4 | 44.6 | 52.2 | 22.0 |
+
+All three cluster within noise of each other — no chaincode shows a
+meaningful edge at this workload and sample size.
+
+**A real bug this found and fixed**: the first benchmark run showed Rust
+~1.6-2.6x *slower* than Go/TypeScript (query mean 59.5ms vs ~42ms, invoke
+mean 110.3ms vs ~45-48ms) — worth investigating rather than either hiding
+or shipping. The cause: `fabric-shim`'s server binds its own `TcpListener`
+and hands it to `tonic` via `serve_with_incoming_shutdown`, which bypasses
+tonic's usual listener setup — including its `tcp_nodelay` option. Nagle's
+algorithm was therefore left enabled on accepted connections, and this
+shim's request/response pattern (small message, expects an immediate reply)
+is exactly what Nagle-plus-delayed-ACK interaction stalls, typically by
+~40ms per round trip. Fixed by calling `set_nodelay(true)` on each accepted
+connection explicitly (see `fabric-shim/src/server.rs`); the numbers above
+are post-fix. Pre-fix numbers are preserved in this section instead of
+quietly dropped.
+
 ## What this does *not* claim
 
 - No independent third-party security audit has been performed.
@@ -123,6 +169,11 @@ cargo +nightly fuzz run composite_key_roundtrip -- -max_total_time=3600
 - Fuzzing has run for short, bounded durations (seconds to low hours), not
   the sustained multi-day campaigns a hardened security-critical library
   would eventually want.
+- The benchmark (§5) is not automated in CI — it's noisy by nature (CLI
+  process spawn overhead, shared-machine variance) and unsuited to a
+  pass/fail gate. It's a manually-run, documented artifact, not a
+  continuously-enforced one. It also measures CLI-driven latency, not a
+  proper concurrent-client load test.
 
 If you find a gap in any of the above, please open an issue — this document
 should stay honest about what's actually been checked.
