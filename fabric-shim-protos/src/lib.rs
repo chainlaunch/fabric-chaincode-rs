@@ -11,6 +11,8 @@
 //! `fabric-shim-protos/protos/` change; then copy the freshly generated
 //! `OUT_DIR` files over `src/generated/` and commit the diff.
 
+#![forbid(unsafe_code)]
+
 /// Fabric `common` package: block/envelope headers, policies, MSP principals.
 pub mod common {
     #[cfg(feature = "regenerate-protos")]

@@ -2,6 +2,8 @@
 //! written with the `#[contract]` API: routing, argument parsing, and
 //! `GetMetadata` all come from the annotations.
 
+#![forbid(unsafe_code)]
+
 use fabric_shim::{contract, ChaincodeStub, DataType, Error, Server};
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +21,18 @@ struct Asset {
     owner: String,
     #[serde(rename = "appraisedValue")]
     appraised_value: u64,
+}
+
+/// Mirrors the Go sample's `QueryResult{Key, Record}` wrapper — confirmed
+/// byte-for-byte against the official chaincode via a differential test on
+/// a live Fabric network (see docs/verification.md). GetAllAssets returns
+/// this wrapped shape, not a bare `Vec<Asset>`, to match upstream exactly.
+#[derive(DataType, Serialize, Deserialize)]
+struct QueryResult {
+    #[serde(rename = "Key")]
+    key: String,
+    #[serde(rename = "Record")]
+    record: Asset,
 }
 
 #[derive(Default)]
@@ -151,13 +165,20 @@ impl AssetTransfer {
     }
 
     #[transaction(evaluate)]
-    async fn get_all_assets(&self, ctx: &ChaincodeStub) -> Result<Vec<Asset>, Error> {
+    async fn get_all_assets(&self, ctx: &ChaincodeStub) -> Result<Vec<QueryResult>, Error> {
         let iter = ctx.get_state_by_range("", "").await?;
         Ok(iter
             .collect_remaining()
             .await?
             .into_iter()
-            .filter_map(|kv| serde_json::from_slice(&kv.value).ok())
+            .filter_map(|kv| {
+                serde_json::from_slice(&kv.value)
+                    .ok()
+                    .map(|record| QueryResult {
+                        key: kv.key,
+                        record,
+                    })
+            })
             .collect())
     }
 

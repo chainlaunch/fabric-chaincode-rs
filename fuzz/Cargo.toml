@@ -1,0 +1,39 @@
+[package]
+name = "fabric-chaincode-rust-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Its own workspace: keeps the sanitizer-instrumented fuzz build (and its
+# nightly-only dependency graph) fully isolated from the main workspace, so
+# `cargo build`/`test` at the repo root never needs a nightly toolchain.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+fabric-shim = { path = "../fabric-shim" }
+fabric-shim-protos = { path = "../fabric-shim-protos" }
+
+[[bin]]
+name = "decode_chaincode_message"
+path = "fuzz_targets/decode_chaincode_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_proposal_chain"
+path = "fuzz_targets/decode_proposal_chain.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "composite_key_roundtrip"
+path = "fuzz_targets/composite_key_roundtrip.rs"
+test = false
+doc = false
+bench = false

@@ -1,5 +1,11 @@
 # fabric-chaincode-rust
 
+[![CI](https://github.com/chainlaunch/fabric-chaincode-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/chainlaunch/fabric-chaincode-rust/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/fabric-shim.svg)](https://crates.io/crates/fabric-shim)
+[![docs.rs](https://docs.rs/fabric-shim/badge.svg)](https://docs.rs/fabric-shim)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![forbid(unsafe_code)](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance/)
+
 A Rust chaincode shim for Hyperledger Fabric — the equivalent of
 [`fabric-chaincode-go`](https://github.com/hyperledger/fabric-chaincode-go),
 targeting **chaincode-as-a-service (CCaaS)** on **Fabric 3.x** peers. The
@@ -18,6 +24,7 @@ chaincode built with this shim is a drop-in Docker image for ChainLaunch's
 | [Migrating from TypeScript](docs/migrating-from-typescript.md) | `fabric-contract-api` decorators → Rust: mapping, wire-name gotcha, checklist |
 | [API reference](docs/reference.md) | Every stub method, macro option, type mapping, env var, and error |
 | [Design spec](docs/spec.md) | Protocol design rationale, parity matrix, and milestone history |
+| [Verification](docs/verification.md) | Why to trust this implementation: differential testing against the Go reference, fuzzing, supply-chain audit, provenance |
 
 ## Layout
 
@@ -99,7 +106,16 @@ cross-chaincode `invoke_chaincode`. See `fabric-shim/src/stub.rs`.
 ```bash
 cargo test --workspace          # unit + mock-peer integration tests
 cargo clippy --workspace --all-targets -- -D warnings
+cargo audit                     # known-vulnerability scan (RustSec advisory-db)
+cargo deny check                # license/bans/advisories/sources policy (deny.toml)
 ```
+
+Every crate carries `#![forbid(unsafe_code)]` — there is no `unsafe` anywhere
+in this codebase, enforced at compile time, not just claimed. CI runs all of
+the above on every push, plus `cargo-audit`/`cargo-deny` as a dedicated job —
+see [Verification](docs/verification.md) for the full case for trusting this
+implementation, including how it's tested against the reference Go
+chaincode.
 
 No `protoc` needed — the generated protobuf bindings are committed under
 `fabric-shim-protos/src/generated/`. Only regenerating them after changing

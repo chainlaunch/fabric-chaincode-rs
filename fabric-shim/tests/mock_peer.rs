@@ -749,4 +749,12 @@ async fn composite_key_roundtrip() {
 
     assert!(fabric_shim::create_composite_key("bad\u{0}type", &[]).is_err());
     assert!(fabric_shim::create_composite_key("Asset", &["bad\u{10FFFF}attr"]).is_err());
+
+    // Regression (found by fuzzing composite_key_roundtrip): an empty
+    // object_type or attribute used to be accepted by create_composite_key
+    // but silently dropped by split_composite_key's trailing-delimiter
+    // filter, breaking the round trip. Both must now be rejected up front.
+    assert!(fabric_shim::create_composite_key("", &[]).is_err());
+    assert!(fabric_shim::create_composite_key("Asset", &[""]).is_err());
+    assert!(fabric_shim::create_composite_key("Asset", &["blue", ""]).is_err());
 }

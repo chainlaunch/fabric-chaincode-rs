@@ -459,6 +459,9 @@ fn require_collection(collection: &str) -> Result<()> {
 }
 
 /// Build a composite key: `\x00{object_type}\x00{attr1}\x00{attr2}\x00...`
+///
+/// `object_type` and every attribute must be non-empty and free of U+0000 /
+/// U+10FFFF.
 pub fn create_composite_key(object_type: &str, attributes: &[&str]) -> Result<String> {
     validate_composite_component(object_type)?;
     let mut key = String::with_capacity(object_type.len() + 2);
@@ -489,6 +492,17 @@ pub fn split_composite_key(composite_key: &str) -> Result<(String, Vec<String>)>
 }
 
 fn validate_composite_component(s: &str) -> Result<()> {
+    // Rejecting empty components isn't just a style choice: split_composite_key
+    // filters empty segments to drop the trailing one that a well-formed key's
+    // final delimiter always produces (see its doc comment). An empty
+    // object_type or attribute would be silently swallowed by that same
+    // filter, breaking the create/split round trip for exactly those inputs
+    // (found by fuzzing: `composite_key_roundtrip` on an empty object_type).
+    if s.is_empty() {
+        return Err(Error::InvalidArgument(
+            "composite key component must not be empty".into(),
+        ));
+    }
     if s.contains(COMPOSITE_KEY_NAMESPACE) || s.contains(MAX_UNICODE_RUNE) {
         return Err(Error::InvalidArgument(format!(
             "composite key component {s:?} contains U+0000 or U+10FFFF"

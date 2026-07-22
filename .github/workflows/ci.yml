@@ -51,6 +51,51 @@ jobs:
       - name: Build with regenerate-protos
         run: cargo build -p fabric-shim-protos --features regenerate-protos
 
+  security:
+    name: Supply-chain audit (cargo-audit + cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo-audit (known vulnerabilities)
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: cargo-deny (licenses, bans, advisories, sources)
+        uses: EmbarkStudios/cargo-deny-action@v2
+
+  fuzz:
+    name: Smoke-fuzz the protocol boundary
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [decode_chaincode_message, decode_proposal_chain, composite_key_roundtrip]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target\nfuzz -> target"
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Fuzz ${{ matrix.target }} (60s smoke run)
+        # Short per-PR smoke run, not exhaustive — catches regressions like
+        # the composite-key round-trip bug this suite found on day one.
+        # Run longer locally (`cargo +nightly fuzz run <target> --
+        # -max_total_time=3600`) for deeper coverage.
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=60
+
   docker:
     name: Build example image
     runs-on: ubuntu-latest
@@ -67,3 +112,12 @@ jobs:
           docker logs smoke
           docker logs smoke 2>&1 | grep -q "chaincode server listening"
           docker rm -f smoke
+
+  differential-fabric:
+    name: Differential test vs. official Go chaincode (real Fabric network)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run differential test
+        run: ./scripts/differential-test.sh

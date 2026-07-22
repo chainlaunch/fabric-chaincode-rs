@@ -28,6 +28,8 @@
 //! }
 //! ```
 
+#![forbid(unsafe_code)]
+
 // Lets macro-generated `fabric_shim::` paths resolve inside this crate too.
 extern crate self as fabric_shim;
 

@@ -1,5 +1,7 @@
 //! Proc macros behind `fabric_shim::contract` — see that module for docs.
 
+#![forbid(unsafe_code)]
+
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
