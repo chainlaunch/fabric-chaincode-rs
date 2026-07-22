@@ -56,6 +56,13 @@ docker build -f "$REPO_ROOT/examples/asset-transfer/Dockerfile" -t basic-rust-be
 docker build --platform linux/amd64 --build-arg CC_SERVER_PORT=9999 \
   -t basic-ts-bench "$WORK_DIR/fabric-samples/asset-transfer-basic/chaincode-typescript"
 
+echo
+echo "--- image sizes ---"
+for img in basic-go-bench basic-rust-bench basic-ts-bench; do
+  docker images "$img" --format "{{.Repository}}: {{.Size}}"
+done
+echo
+
 echo "--- starting test network (Fabric ${FABRIC_VERSION}) ---"
 cd "$WORK_DIR/fabric-samples/test-network"
 ./network.sh up createChannel -c mychannel -i "$FABRIC_VERSION" -ca
@@ -136,17 +143,50 @@ for cc in basic-go basic-rust basic-ts; do
     --peerAddresses localhost:9051 --tlsRootCertFiles "$PEER0_ORG2_CA" >/dev/null
 done
 
-echo "--- starting chaincode containers ---"
+# Readiness time: elapsed from `docker run` until the container answers a
+# real query successfully — a uniform proxy across three very different
+# runtimes/log formats (Go's own log line, Node's fabric-chaincode-node
+# banner, our tracing output all look nothing alike, but "peer can query
+# it" means the same thing for all three: REGISTER/READY handshake done).
+wait_ready() {
+  local cc="$1" start elapsed out
+  start=$(python3 -c 'import time; print(time.time())')
+  for _ in $(seq 1 100); do
+    # A clean success OR a "does not exist" rejection both prove the
+    # chaincode is up and answering (REGISTER/READY handshake done) — a
+    # connection-refused/timeout error is the only "not ready yet" case.
+    # set +e around the probe: it's *expected* to fail repeatedly until the
+    # container comes up, and `set -e` would otherwise kill the whole script
+    # on the very first attempt.
+    set +e
+    out=$(peer chaincode query -C mychannel -n "$cc" -c '{"function":"ReadAsset","Args":["__readiness_probe__"]}' 2>&1)
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] || echo "$out" | /usr/bin/grep -q "does not exist\|already exists\|status:500"; then
+      break
+    fi
+    sleep 0.1
+  done
+  elapsed=$(python3 -c "import time; print(f'{time.time() - $start:.2f}')")
+  echo "$cc ready in ${elapsed}s"
+}
+
+echo "--- starting chaincode containers (timing readiness) ---"
 docker run -d --name basic-go-cc --network fabric_test \
   -e CHAINCODE_SERVER_ADDRESS=0.0.0.0:9999 -e CHAINCODE_ID="$GO_PKG_ID" -e CORE_CHAINCODE_ID_NAME="$GO_PKG_ID" \
-  basic-go-bench
+  basic-go-bench >/dev/null
+wait_ready basic-go
+
 docker run -d --name basic-rust-cc --network fabric_test \
   -e CHAINCODE_ID="$RUST_PKG_ID" \
-  basic-rust-bench
+  basic-rust-bench >/dev/null
+wait_ready basic-rust
+
 docker run -d --name basic-ts-cc --network fabric_test --platform linux/amd64 \
   -e CHAINCODE_SERVER_ADDRESS=0.0.0.0:9999 -e CHAINCODE_ID="$TS_PKG_ID" \
-  basic-ts-bench
-sleep 4
+  basic-ts-bench >/dev/null
+wait_ready basic-ts
+echo
 
 echo "--- InitLedger on all three ---"
 for cc in basic-go basic-rust basic-ts; do

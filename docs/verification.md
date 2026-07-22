@@ -131,16 +131,17 @@ benchmark would drive load from a persistent client (e.g. Hyperledger
 Caliper or a `fabric-gateway` SDK loop) instead of spawning a CLI process
 per call — that's a documented gap, not a hidden one.
 
-Results from a local run (`./scripts/benchmark.sh 30`, N=30 per operation):
+Results from a local run (`./scripts/benchmark.sh 30`, N=30 per operation —
+the same run used for the infra numbers in §6 below):
 
 | Chaincode | Op | mean (ms) | p50 | p95 | ops/s |
 |---|---|---|---|---|---|
-| Go (`chaincode-external`) | query | 40.3 | 36.0 | 100.9 | 24.8 |
-| Go | invoke | 43.5 | 43.1 | 51.6 | 23.0 |
-| **Rust (`fabric-shim`)** | query | 36.1 | 36.0 | 39.5 | 27.7 |
-| **Rust** | invoke | 46.6 | 42.6 | 55.7 | 21.5 |
-| TypeScript (`chaincode-typescript`) | query | 36.6 | 35.5 | 40.7 | 27.3 |
-| TypeScript | invoke | 45.4 | 44.6 | 52.2 | 22.0 |
+| Go (`chaincode-external`) | query | 36.8 | 34.8 | 44.5 | 27.2 |
+| Go | invoke | 42.3 | 41.0 | 49.3 | 23.7 |
+| **Rust (`fabric-shim`)** | query | 37.9 | 38.1 | 43.1 | 26.4 |
+| **Rust** | invoke | 43.2 | 42.6 | 49.0 | 23.1 |
+| TypeScript (`chaincode-typescript`) | query | 39.1 | 37.6 | 44.6 | 25.6 |
+| TypeScript | invoke | 46.4 | 46.0 | 50.7 | 21.6 |
 
 All three cluster within noise of each other — no chaincode shows a
 meaningful edge at this workload and sample size.
@@ -159,6 +160,77 @@ connection explicitly (see `fabric-shim/src/server.rs`); the numbers above
 are post-fix. Pre-fix numbers are preserved in this section instead of
 quietly dropped.
 
+## 6. Infrastructure footprint: image size, startup, CPU/memory
+
+Same benchmark run also captures what actually matters for running these
+chaincodes at scale on real infrastructure — not just per-call latency.
+
+**Image size** (`docker images`, same build used for the latency run):
+
+| Chaincode | Image size |
+|---|---|
+| Go (`chaincode-external`) | 840 MB |
+| **Rust (`fabric-shim`)** | **52.5 MB** |
+| TypeScript (`chaincode-typescript`) | 1.66 GB |
+
+Rust's image is ~16x smaller than Go's and ~32x smaller than TypeScript's —
+a static-ish binary in a slim runtime layer vs. the Go toolchain's base
+image and Node's `node_modules`, respectively.
+
+**Container CPU/memory** (`docker stats`, sampled every 0.3s: once idle
+before any load, then continuously during the query/invoke loop):
+
+| Chaincode | idle MB | avg MB (under load) | peak MB | avg CPU% | peak CPU% |
+|---|---|---|---|---|---|
+| Go | 12.2 | 13.1 | 13.3 | 1.5 | 3.1 |
+| **Rust** | **1.8** | **2.1** | **2.1** | **0.7** | **1.4** |
+| TypeScript | 173.7 | 177.4 | 177.5 | 6.9 | 13.8 |
+
+Rust uses roughly 1/6th the memory of Go's already-lean footprint, and
+~85x less than the Node.js runtime. This is the one metric in this
+document where the language runtime itself, not CLI/network overhead,
+is what's being measured — and it's not close.
+
+**Container readiness time** (elapsed from `docker run` to the first
+successful `peer chaincode query` against that container — proof the
+REGISTER/READY handshake with the peer completed): all three chaincodes
+measured **0.07s** in the same run. Read this as a measurement-floor
+result, not a real tie: the probe's granularity is bounded below by the
+`peer chaincode query` CLI process's own spawn time (roughly the same
+order of magnitude), so it cannot resolve true readiness differences
+smaller than that floor. Take it as "all three register with the peer
+fast enough that CLI overhead dominates," not as evidence they're
+identical.
+
+**A further safe optimization applied while investigating this**: beyond
+the `TCP_NODELAY` latency fix (§5), the release profile now sets
+`lto = "fat"`, `codegen-units = 1`, and `strip = true`
+(`Cargo.toml`, `[profile.release]`) — LTO and single-codegen-unit for
+better cross-crate inlining, `strip` to drop debug symbols from the
+shipped binary. `panic = "abort"` was deliberately *not* used: the
+shim's panic-isolation guarantee (a panicking chaincode handler fails
+only its own transaction, not the whole process — see
+`panicking_chaincode_returns_500_and_stream_survives` in
+`fabric-shim/tests/mock_peer.rs`) depends on `panic = "unwind"` plus
+catching `tokio::spawn`'s `JoinError`; `abort` would silently break that
+guarantee for a marginal size win. Verified behavior-preserving via the
+full suite in both dev and release mode
+(`cargo test --workspace` / `--release`, 19/19 both), plus
+`cargo clippy` and `cargo fmt --check` clean. Effect on the release
+binary itself:
+
+| Build | `asset-transfer` binary size |
+|---|---|
+| Baseline (no LTO/strip) | 4,360,416 bytes |
+| `+ lto = "fat", codegen-units = 1` | 3,083,872 bytes (-29%) |
+| `+ strip = true` | 2,442,688 bytes (-44% from baseline) |
+
+The Docker image shrank from 52.5 MB to 51.4 MB with `strip` added — a
+smaller win at the image level than at the binary level, since the base
+runtime layer dominates total image size. Build time increased from
+~13.5s to ~28-30s (LTO's cost); this only affects release builds used for
+deployment, not the inner dev loop.
+
 ## What this does *not* claim
 
 - No independent third-party security audit has been performed.
@@ -169,11 +241,15 @@ quietly dropped.
 - Fuzzing has run for short, bounded durations (seconds to low hours), not
   the sustained multi-day campaigns a hardened security-critical library
   would eventually want.
-- The benchmark (§5) is not automated in CI — it's noisy by nature (CLI
+- The benchmark (§5, §6) is not automated in CI — it's noisy by nature (CLI
   process spawn overhead, shared-machine variance) and unsuited to a
   pass/fail gate. It's a manually-run, documented artifact, not a
   continuously-enforced one. It also measures CLI-driven latency, not a
   proper concurrent-client load test.
+- The readiness-time measurement (§6) is bounded below by the probing
+  CLI's own spawn overhead, as noted there — it shows all three
+  chaincodes register with the peer quickly, not a precise ranking of
+  startup speed.
 
 If you find a gap in any of the above, please open an issue — this document
 should stay honest about what's actually been checked.

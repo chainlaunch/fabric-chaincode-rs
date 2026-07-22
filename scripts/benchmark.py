@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
-"""Times invoke/query latency for chaincodes already installed on a running
-Fabric test-network (see scripts/benchmark.sh, which sets one up with
-basic-go/basic-rust/basic-ts and calls this).
+"""Times invoke/query latency AND samples container CPU/memory for
+chaincodes already installed on a running Fabric test-network (see
+scripts/benchmark.sh, which sets one up with basic-go/basic-rust/basic-ts
+and calls this).
 
-This measures END-TO-END latency through the `peer chaincode` CLI: process
-spawn + TLS handshake + gRPC to the peer + endorsement + the peer-to-chaincode
-RPC + response. It is NOT a microbenchmark of chaincode execution time alone
-— CLI/network overhead likely dominates the small differences between
-chaincode runtimes at this scale. Treat results as "these three chaincodes
-perform comparably under real Fabric traffic", not as a precise measurement
-of any one language's execution speed. See docs/verification.md.
+Latency here is END-TO-END through the `peer chaincode` CLI: process spawn
++ TLS handshake + gRPC to the peer + endorsement + the peer-to-chaincode RPC
++ response. It is NOT a microbenchmark of chaincode execution time alone —
+CLI/network overhead likely dominates the small differences between
+chaincode runtimes at this scale. Treat latency results as "these three
+chaincodes perform comparably under real Fabric traffic", not as a precise
+measurement of any one language's execution speed.
+
+CPU/memory come from `docker stats` on each chaincode's own container —
+that number IS specific to the chaincode process itself (not the peer or
+CLI), so it's a fair per-runtime comparison of runtime footprint, sampled
+both idle (before any load) and while the invoke/query loop is running.
+See docs/verification.md.
 """
 import argparse
 import os
 import statistics
 import subprocess
 import sys
+import threading
 import time
 
 
@@ -61,6 +69,71 @@ def stats(latencies_s):
     }
 
 
+def _parse_mem_to_mb(mem_str):
+    # docker stats MemUsage looks like "12.34MiB / 512MiB" — take the used side.
+    used = mem_str.split("/")[0].strip()
+    for unit, factor in (("GiB", 1024.0), ("MiB", 1.0), ("KiB", 1.0 / 1024.0), ("B", 1.0 / (1024.0 * 1024.0))):
+        if used.endswith(unit):
+            return float(used[: -len(unit)]) * factor
+    return float("nan")
+
+
+def docker_stats_once(container):
+    """One (cpu_percent, mem_mb) snapshot for a running container, or None."""
+    try:
+        out = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}\t{{.MemUsage}}", container],
+            capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    line = out.stdout.strip()
+    if out.returncode != 0 or not line:
+        return None
+    cpu_str, mem_str = line.split("\t")
+    return float(cpu_str.rstrip("%")), _parse_mem_to_mb(mem_str)
+
+
+class ResourceSampler:
+    """Polls `docker stats` for one container on a background thread."""
+
+    def __init__(self, container, interval_s=0.3):
+        self.container = container
+        self.interval_s = interval_s
+        self.samples = []
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _loop(self):
+        while not self._stop.is_set():
+            sample = docker_stats_once(self.container)
+            if sample is not None:
+                self.samples.append(sample)
+            self._stop.wait(self.interval_s)
+
+    def start(self):
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def summary(self):
+        if not self.samples:
+            return {"n": 0, "cpu_avg": 0, "cpu_peak": 0, "mem_avg_mb": 0, "mem_peak_mb": 0}
+        cpus = [s[0] for s in self.samples]
+        mems = [s[1] for s in self.samples]
+        return {
+            "n": len(self.samples),
+            "cpu_avg": statistics.mean(cpus),
+            "cpu_peak": max(cpus),
+            "mem_avg_mb": statistics.mean(mems),
+            "mem_peak_mb": max(mems),
+        }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test-network-dir", required=True, help="path to fabric-samples/test-network")
@@ -96,8 +169,16 @@ def main():
 
     results = {}
     for cc in chaincodes:
+        container = f"{cc}-cc"
+
         print(f"--- {cc}: warming up ---", file=sys.stderr)
         run(query_args(cc, "ReadAsset", '["asset1"]'), env, test_network_dir, 15)
+
+        idle = docker_stats_once(container)
+        print(f"--- {cc}: idle = {idle} (cpu%, mem MB) ---", file=sys.stderr)
+
+        sampler = ResourceSampler(container)
+        sampler.start()
 
         print(f"--- {cc}: {args.num_calls} queries (ReadAsset) ---", file=sys.stderr)
         query_lat = []
@@ -119,7 +200,12 @@ def main():
                 continue
             invoke_lat.append(elapsed)
 
-        results[cc] = {"query": stats(query_lat), "invoke": stats(invoke_lat)}
+        sampler.stop()
+        resource = sampler.summary()
+        resource["idle_mem_mb"] = idle[1] if idle else float("nan")
+        resource["idle_cpu"] = idle[0] if idle else float("nan")
+
+        results[cc] = {"query": stats(query_lat), "invoke": stats(invoke_lat), "resource": resource}
 
     print()
     print(f"{'Chaincode':<12} {'Op':<8} {'n':>4} {'min':>8} {'mean':>8} {'p50':>8} {'p95':>8} {'max':>8} {'ops/s':>8}")
@@ -131,6 +217,15 @@ def main():
                 f"{s['min_ms']:>7.1f} {s['mean_ms']:>7.1f} {s['p50_ms']:>7.1f} "
                 f"{s['p95_ms']:>7.1f} {s['max_ms']:>7.1f} {s['throughput_ops_s']:>7.1f}"
             )
+
+    print()
+    print(f"{'Chaincode':<12} {'idle MB':>9} {'avg MB':>9} {'peak MB':>9} {'avg CPU%':>9} {'peak CPU%':>10} {'samples':>8}")
+    for cc in chaincodes:
+        r = results[cc]["resource"]
+        print(
+            f"{cc:<12} {r['idle_mem_mb']:>8.1f} {r['mem_avg_mb']:>8.1f} {r['mem_peak_mb']:>8.1f} "
+            f"{r['cpu_avg']:>8.1f} {r['cpu_peak']:>9.1f} {r['n']:>8}"
+        )
 
 
 if __name__ == "__main__":

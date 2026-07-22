@@ -17,6 +17,17 @@ repository = "https://github.com/chainlaunch/fabric-chaincode-rs"
 readme = "README.md"
 rust-version = "1.85"
 
+[profile.release]
+# Safe, behavior-preserving optimizations only. Explicitly NOT panic =
+# "abort": panic isolation (a panicking chaincode handler fails only that
+# transaction, not the whole process — see fabric-shim/src/handler.rs and
+# the panicking_chaincode_returns_500_and_stream_survives test) depends on
+# unwind + catching the tokio::spawn JoinError. Switching to abort would
+# silently break that safety guarantee for a minor size/speed win.
+lto = "fat"
+codegen-units = 1
+strip = true
+
 [workspace.dependencies]
 fabric-shim-protos = { path = "fabric-shim-protos", version = "0.1.0" }
 fabric-shim-macros = { path = "fabric-shim-macros", version = "0.1.0" }
