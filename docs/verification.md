@@ -289,6 +289,69 @@ is within ordinary run-to-run noise, not a trend — confirming, rather than
 just asserting, that these allocation fixes don't move a CLI-dominated
 benchmark.
 
+## 7. A fairer benchmark: one connection, real concurrency
+
+§5's benchmark spawns a fresh `peer chaincode` CLI process per call, so
+every single measurement pays a full TLS handshake and process cold start
+— overhead identical across all three chaincodes, unrelated to the
+language, and large enough (measured ~35-40ms) to swamp any real
+per-language difference. It also structurally cannot measure throughput
+under concurrency: one CLI process can only have one call in flight.
+
+[`scripts/gateway-bench`](../scripts/gateway-bench) is a second benchmark
+client — a standalone Rust binary (deliberately excluded from this repo's
+own workspace; see its `Cargo.toml`) built on the sibling
+[`fabric-gateway-rs`](https://github.com/chainlaunch/fabric-gateway-rs)
+project. It connects to the peer's Gateway service **once** and reuses
+that connection for every call, isolating peer + chaincode latency from
+per-call setup cost, and adds a genuine concurrent-throughput
+measurement (20 concurrent callers, 600 calls total per operation)
+alongside the one-at-a-time latency numbers. `scripts/benchmark.sh` now
+runs both benchmarks back to back against the same deployed chaincodes.
+
+Results from a live run (same three chaincodes, same channel):
+
+**Sequential (one call at a time, connection already open):**
+
+| Chaincode | Op | mean | ops/s |
+|---|---|---|---|
+| Go | query | 2.3ms | 438.2 |
+| **Rust** | query | **1.3ms** | **767.6** |
+| TypeScript | query | 3.1ms | 325.9 |
+
+Query latency with the CLI/TLS tax removed: Rust is **~1.8x faster than
+Go**, not "within noise" — §5's CLI overhead really was hiding this.
+
+**Concurrent (20 simultaneous callers, 600 total calls per operation):**
+
+| Chaincode | query ops/s | invoke ops/s |
+|---|---|---|
+| Go | 4,727.6 | 845.4 |
+| **Rust** | **8,390.8** | **998.9** |
+| TypeScript | 1,095.5 | 110.8 |
+
+Rust beats Go by **1.77x on concurrent query throughput** and **1.18x on
+concurrent invoke throughput** — zero failures on either side. TypeScript
+trails both by a wide margin under concurrency, most visibly on invoke;
+that's the official, unmodified `chaincode-typescript` sample, not
+something this project tunes, and the cause (likely how its Node CCaaS
+shim serializes handling of the peer's single incoming message stream)
+is outside this repo's code to fix.
+
+**The one number that is *not* a fair language comparison**: sequential
+invoke latency measured **~2010ms for all three languages, uniformly**.
+That's not chaincode or shim latency — the test-network orderer's default
+`BatchTimeout` is 2 seconds, and `submit_transaction` (unlike the CLI's
+`invoke`, which returns right after ordering) waits for the transaction
+to actually commit. One submission arriving alone waits out the full
+batch timer before its block is cut, regardless of language. This
+disappears under concurrent load (many submissions share one batch) —
+see the 845-999 ops/s invoke throughput above — which is exactly why the
+number is included here instead of silently dropped: it would be easy to
+misread as "invoke is slow," when it's actually "solitary transactions
+wait for the orderer's clock, and that has nothing to do with the
+chaincode."
+
 ## What this does *not* claim
 
 - No independent third-party security audit has been performed.
@@ -299,15 +362,23 @@ benchmark.
 - Fuzzing has run for short, bounded durations (seconds to low hours), not
   the sustained multi-day campaigns a hardened security-critical library
   would eventually want.
-- The benchmark (§5, §6) is not automated in CI — it's noisy by nature (CLI
-  process spawn overhead, shared-machine variance) and unsuited to a
-  pass/fail gate. It's a manually-run, documented artifact, not a
-  continuously-enforced one. It also measures CLI-driven latency, not a
-  proper concurrent-client load test.
+- The benchmarks (§5, §6, §7) are not automated in CI — noisy by nature
+  (process spawn overhead, shared-machine variance) and unsuited to a
+  pass/fail gate. They're manually-run, documented artifacts, not
+  continuously-enforced ones.
 - The readiness-time measurement (§6) is bounded below by the probing
   CLI's own spawn overhead, as noted there — it shows all three
   chaincodes register with the peer quickly, not a precise ranking of
   startup speed.
+- §7's `gateway-bench` tool depends on the sibling `fabric-gateway-rs`
+  repo via a local path dependency (see its `Cargo.toml`) and isn't wired
+  into this repo's CI for that reason — same "run it locally, documented
+  manually" status as the other benchmarks. It's a single run (n=30
+  sequential, 600 total concurrent calls per operation), not a long
+  statistical campaign; the gap it found (Rust ~1.8x/1.2x Go throughput)
+  is large enough to read as a real signal rather than noise, but treat
+  the exact multiplier as approximate, not a guarantee reproducible to
+  the decimal on other hardware.
 
 If you find a gap in any of the above, please open an issue — this document
 should stay honest about what's actually been checked.

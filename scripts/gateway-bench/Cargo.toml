@@ -1,0 +1,25 @@
+# Standalone benchmarking tool, deliberately NOT a member of the workspace at
+# ../../Cargo.toml: fabric-gateway-rs's build.rs needs protoc, and the shim
+# workspace's whole point is that `cargo build --workspace` needs none. The
+# empty [workspace] table below opts this crate out of the parent workspace
+# instead of being auto-attached to it.
+[workspace]
+
+[package]
+name = "gateway-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Local-tooling-only path dependency on the sibling fabric-gateway-rs repo
+# (github.com/chainlaunch/fabric-gateway-rs), expected checked out next to
+# this repo (../../../fabric-gateway-rs from here). Not wired into CI for
+# that reason -- run it locally via scripts/benchmark.sh, same as the
+# CLI-driven benchmark, which also isn't CI-automated (see
+# docs/verification.md).
+[dependencies]
+fabric-gateway = { path = "../../../fabric-gateway-rs" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tonic = { version = "0.12", features = ["tls", "tls-roots"] }
+futures = "0.3"
+clap = { version = "4", features = ["derive"] }

@@ -197,8 +197,39 @@ for cc in basic-go basic-rust basic-ts; do
   sleep 1
 done
 
-echo "--- benchmarking ($NUM_CALLS calls per op per chaincode) ---"
+echo "--- benchmarking, CLI-per-call ($NUM_CALLS calls per op per chaincode) ---"
 python3 "$REPO_ROOT/scripts/benchmark.py" \
   --test-network-dir "$PWD" \
   --run-id "bench-$(date +%s 2>/dev/null || echo run)" \
   -n "$NUM_CALLS"
+
+# --- Persistent-connection benchmark (fabric-gateway, connect once) ---
+# The CLI-based run above pays a fresh TLS handshake + process spawn on
+# every single call, which dominates its latency numbers (see
+# docs/verification.md §5). This second pass connects once via the Rust
+# fabric-gateway client (sibling repo, ../fabric-gateway-rs) and reuses that
+# connection for every call, isolating peer+chaincode latency from CLI/TLS
+# setup cost -- and adds a genuine concurrent-throughput measurement the
+# CLI-per-call approach cannot produce at all (one CLI process can only
+# have one call in flight).
+echo
+echo "--- building gateway-bench (release) ---"
+(cd "$REPO_ROOT/scripts/gateway-bench" && cargo build --release --quiet)
+
+use_org1
+ADMIN_CERT=$(ls "$CORE_PEER_MSPCONFIGPATH"/signcerts/*.pem | head -1)
+ADMIN_KEY=$(ls "$CORE_PEER_MSPCONFIGPATH"/keystore/*_sk | head -1)
+
+echo "--- benchmarking, persistent connection (fabric-gateway) ---"
+"$REPO_ROOT/scripts/gateway-bench/target/release/gateway-bench" \
+  --endpoint localhost:7051 \
+  --override peer0.org1.example.com \
+  --tls-ca "$PEER0_ORG1_CA" \
+  --msp Org1MSP \
+  --cert "$ADMIN_CERT" \
+  --key "$ADMIN_KEY" \
+  --channel mychannel \
+  --chaincodes basic-go,basic-rust,basic-ts \
+  --num-calls "$NUM_CALLS" \
+  --concurrency 20 \
+  --run-id "gwbench-$(date +%s 2>/dev/null || echo run)"
