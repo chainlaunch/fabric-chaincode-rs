@@ -51,6 +51,61 @@ impl Chaincode for TestKv {
             "event" => stub
                 .set_event("AssetTransferred", b"asset1".to_vec())
                 .map(|_| Response::success_empty()),
+            "put_pd" => stub
+                .put_private_data(&args[0], &args[1], args[2].as_bytes().to_vec())
+                .await
+                .map(|_| Response::success_empty()),
+            "get_pd" => stub
+                .get_private_data(&args[0], &args[1])
+                .await
+                .map(Response::success),
+            "del_pd" => stub
+                .del_private_data(&args[0], &args[1])
+                .await
+                .map(|_| Response::success_empty()),
+            "purge_pd" => stub
+                .purge_private_data(&args[0], &args[1])
+                .await
+                .map(|_| Response::success_empty()),
+            "pd_hash" => stub
+                .get_private_data_hash(&args[0], &args[1])
+                .await
+                .map(Response::success),
+            "pd_range" => match stub.get_private_data_by_range(&args[0], "", "").await {
+                Ok(iter) => iter.collect_remaining().await.map(|kvs| {
+                    let keys: Vec<String> = kvs.into_iter().map(|kv| kv.key).collect();
+                    Response::success(keys.join(",").into_bytes())
+                }),
+                Err(e) => Err(e),
+            },
+            "pkey_put" => {
+                match stub.create_composite_key(&args[0], &[args[1].as_str(), args[2].as_str()]) {
+                    Ok(key) => stub
+                        .put_state(&key, args[3].as_bytes().to_vec())
+                        .await
+                        .map(|_| Response::success_empty()),
+                    Err(e) => Err(e),
+                }
+            }
+            "pkey_range" => match stub
+                .get_state_by_partial_composite_key(&args[0], &[args[1].as_str()])
+                .await
+            {
+                Ok(iter) => iter.collect_remaining().await.map(|kvs| {
+                    let parts: Result<Vec<String>, fabric_shim::Error> = kvs
+                        .into_iter()
+                        .map(|kv| {
+                            stub.split_composite_key(&kv.key)
+                                .map(|(_, attrs)| attrs.join("|"))
+                        })
+                        .collect();
+                    match parts {
+                        Ok(parts) => Response::success(parts.join(",").into_bytes()),
+                        Err(e) => Response::error(e.to_string()),
+                    }
+                }),
+                Err(e) => Err(e),
+            },
             "transient" => Ok(Response::success(
                 stub.get_transient()
                     .get("secret")
@@ -93,6 +148,11 @@ struct MockPeer {
     to_shim: mpsc::Sender<pb::ChaincodeMessage>,
     from_shim: tonic::Streaming<pb::ChaincodeMessage>,
     state: BTreeMap<String, Vec<u8>>,
+    /// Private data collections: (collection, key) -> value. A separate map
+    /// (not just a namespaced key in `state`) mirrors a real peer, where
+    /// private data collections are isolated key spaces from world state and
+    /// from each other.
+    private_state: BTreeMap<(String, String), Vec<u8>>,
     /// Open iterators: id -> remaining pre-encoded results.
     iterators: HashMap<String, Vec<Vec<u8>>>,
     next_iter: u64,
@@ -123,6 +183,7 @@ impl MockPeer {
             to_shim,
             from_shim,
             state: BTreeMap::new(),
+            private_state: BTreeMap::new(),
             iterators: HashMap::new(),
             next_iter: 0,
             range_batch: 2,
@@ -158,6 +219,7 @@ impl MockPeer {
             to_shim,
             from_shim,
             state: BTreeMap::new(),
+            private_state: BTreeMap::new(),
             iterators: HashMap::new(),
             next_iter: 0,
             range_batch: 2,
@@ -228,36 +290,82 @@ impl MockPeer {
         let reply: Vec<u8> = match msg.r#type() {
             MsgType::GetState => {
                 let req = pb::GetState::decode(msg.payload.as_ref()).unwrap();
-                self.state.get(&req.key).cloned().unwrap_or_default()
+                if req.collection.is_empty() {
+                    self.state.get(&req.key).cloned().unwrap_or_default()
+                } else {
+                    self.private_state
+                        .get(&(req.collection, req.key))
+                        .cloned()
+                        .unwrap_or_default()
+                }
+            }
+            // Real peers return sha256(value) here; the shim only relays
+            // whatever bytes the peer sends back, so proving wire
+            // correctness doesn't need a real hash -- echo the stored value.
+            MsgType::GetPrivateDataHash => {
+                let req = pb::GetState::decode(msg.payload.as_ref()).unwrap();
+                self.private_state
+                    .get(&(req.collection, req.key))
+                    .cloned()
+                    .unwrap_or_default()
             }
             MsgType::PutState => {
                 let req = pb::PutState::decode(msg.payload.as_ref()).unwrap();
-                self.state.insert(req.key, req.value.to_vec());
+                if req.collection.is_empty() {
+                    self.state.insert(req.key, req.value.to_vec());
+                } else {
+                    self.private_state
+                        .insert((req.collection, req.key), req.value.to_vec());
+                }
                 Vec::new()
             }
             MsgType::DelState => {
                 let req = pb::DelState::decode(msg.payload.as_ref()).unwrap();
-                self.state.remove(&req.key);
+                if req.collection.is_empty() {
+                    self.state.remove(&req.key);
+                } else {
+                    self.private_state.remove(&(req.collection, req.key));
+                }
+                Vec::new()
+            }
+            MsgType::PurgePrivateData => {
+                let req = pb::PurgePrivateState::decode(msg.payload.as_ref()).unwrap();
+                self.private_state.remove(&(req.collection, req.key));
                 Vec::new()
             }
             MsgType::GetStateByRange => {
                 let req = pb::GetStateByRange::decode(msg.payload.as_ref()).unwrap();
-                let results: Vec<Vec<u8>> = self
-                    .state
-                    .iter()
-                    .filter(|(k, _)| {
-                        (req.start_key.is_empty() || k.as_str() >= req.start_key.as_str())
-                            && (req.end_key.is_empty() || k.as_str() < req.end_key.as_str())
-                    })
-                    .map(|(k, v)| {
-                        queryresult::Kv {
-                            namespace: "testcc".into(),
-                            key: k.clone(),
-                            value: v.clone(),
-                        }
-                        .encode_to_vec()
-                    })
-                    .collect();
+                let in_range = |k: &str| {
+                    (req.start_key.is_empty() || k >= req.start_key.as_str())
+                        && (req.end_key.is_empty() || k < req.end_key.as_str())
+                };
+                let results: Vec<Vec<u8>> = if req.collection.is_empty() {
+                    self.state
+                        .iter()
+                        .filter(|(k, _)| in_range(k))
+                        .map(|(k, v)| {
+                            queryresult::Kv {
+                                namespace: "testcc".into(),
+                                key: k.clone(),
+                                value: v.clone(),
+                            }
+                            .encode_to_vec()
+                        })
+                        .collect()
+                } else {
+                    self.private_state
+                        .iter()
+                        .filter(|((c, k), _)| *c == req.collection && in_range(k))
+                        .map(|((_, k), v)| {
+                            queryresult::Kv {
+                                namespace: "testcc".into(),
+                                key: k.clone(),
+                                value: v.clone(),
+                            }
+                            .encode_to_vec()
+                        })
+                        .collect()
+                };
                 self.next_iter += 1;
                 let id = format!("iter-{}", self.next_iter);
                 self.query_response(id, results)
@@ -757,4 +865,125 @@ async fn composite_key_roundtrip() {
     assert!(fabric_shim::create_composite_key("", &[]).is_err());
     assert!(fabric_shim::create_composite_key("Asset", &[""]).is_err());
     assert!(fabric_shim::create_composite_key("Asset", &["blue", ""]).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Private data (unlike composite_key_roundtrip above, this covers the actual
+// wire protocol -- PutState/GetState/DelState with a collection set, plus the
+// GetPrivateDataHash/PurgePrivateData message types -- not just pure encoding)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn private_data_roundtrip_and_isolation() {
+    let (addr, _stop) = start_shim().await;
+    let mut peer = MockPeer::connect(addr).await;
+
+    peer.start_tx("tx1", &["put_pd", "collectionA", "k1", "secret1"])
+        .await;
+    let (resp, _) = peer.run_tx_to_completion("tx1").await;
+    assert_eq!(resp.status, fabric_shim::OK, "{}", resp.message);
+    assert_eq!(
+        peer.private_state
+            .get(&("collectionA".to_string(), "k1".to_string()))
+            .unwrap(),
+        b"secret1"
+    );
+
+    peer.start_tx("tx2", &["get_pd", "collectionA", "k1"]).await;
+    let (resp, _) = peer.run_tx_to_completion("tx2").await;
+    assert_eq!(resp.status, fabric_shim::OK);
+    assert_eq!(resp.payload, b"secret1");
+
+    // A different collection with the same key sees nothing -- private data
+    // collections are isolated key spaces from each other.
+    peer.start_tx("tx3", &["get_pd", "collectionB", "k1"]).await;
+    let (resp, _) = peer.run_tx_to_completion("tx3").await;
+    assert_eq!(resp.status, fabric_shim::OK);
+    assert_eq!(resp.payload, Vec::<u8>::new());
+
+    // World state (no collection) also sees nothing -- private data must
+    // never leak into the world state key space.
+    peer.start_tx("tx4", &["get", "k1"]).await;
+    let (resp, _) = peer.run_tx_to_completion("tx4").await;
+    assert_eq!(resp.status, fabric_shim::OK);
+    assert_eq!(resp.payload, Vec::<u8>::new());
+
+    peer.start_tx("tx5", &["del_pd", "collectionA", "k1"]).await;
+    let (resp, _) = peer.run_tx_to_completion("tx5").await;
+    assert_eq!(resp.status, fabric_shim::OK, "{}", resp.message);
+    peer.start_tx("tx6", &["get_pd", "collectionA", "k1"]).await;
+    let (resp, _) = peer.run_tx_to_completion("tx6").await;
+    assert_eq!(resp.payload, Vec::<u8>::new());
+}
+
+#[tokio::test]
+async fn private_data_hash_and_purge() {
+    let (addr, _stop) = start_shim().await;
+    let mut peer = MockPeer::connect(addr).await;
+
+    peer.start_tx("tx1", &["put_pd", "collectionA", "k2", "v2"])
+        .await;
+    let (resp, _) = peer.run_tx_to_completion("tx1").await;
+    assert_eq!(resp.status, fabric_shim::OK, "{}", resp.message);
+
+    // GetPrivateDataHash is a distinct message type from GetState -- confirm
+    // the shim actually sends it (not silently falling back to GetState) and
+    // correctly relays whatever bytes the peer replies with. A real peer
+    // computes sha256(value) here; the mock echoes the value; either way
+    // this proves wire correctness, not hash correctness (that's the peer's
+    // job in production, not the shim's).
+    peer.start_tx("tx2", &["pd_hash", "collectionA", "k2"])
+        .await;
+    let req = peer.recv().await;
+    assert_eq!(req.r#type(), MsgType::GetPrivateDataHash);
+    peer.serve_request(req).await;
+    let (resp, _) = peer.run_tx_to_completion("tx2").await;
+    assert_eq!(resp.status, fabric_shim::OK, "{}", resp.message);
+    assert_eq!(resp.payload, b"v2");
+
+    peer.start_tx("tx3", &["purge_pd", "collectionA", "k2"])
+        .await;
+    let req = peer.recv().await;
+    assert_eq!(req.r#type(), MsgType::PurgePrivateData);
+    peer.serve_request(req).await;
+    let (resp, _) = peer.run_tx_to_completion("tx3").await;
+    assert_eq!(resp.status, fabric_shim::OK, "{}", resp.message);
+
+    peer.start_tx("tx4", &["get_pd", "collectionA", "k2"]).await;
+    let (resp, _) = peer.run_tx_to_completion("tx4").await;
+    assert_eq!(resp.payload, Vec::<u8>::new());
+}
+
+// ---------------------------------------------------------------------------
+// Composite key range queries -- composite_key_roundtrip above only checks
+// create/split are inverses; this drives get_state_by_partial_composite_key
+// through the real GetStateByRange wire path and checks the prefix filter
+// actually separates unrelated object instances.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn composite_key_partial_range_query() {
+    let (addr, _stop) = start_shim().await;
+    let mut peer = MockPeer::connect(addr).await;
+
+    peer.start_tx("tx1", &["pkey_put", "Asset", "blue", "asset1", "100"])
+        .await;
+    let (resp, _) = peer.run_tx_to_completion("tx1").await;
+    assert_eq!(resp.status, fabric_shim::OK, "{}", resp.message);
+    peer.start_tx("tx2", &["pkey_put", "Asset", "blue", "asset2", "200"])
+        .await;
+    let (resp, _) = peer.run_tx_to_completion("tx2").await;
+    assert_eq!(resp.status, fabric_shim::OK, "{}", resp.message);
+    peer.start_tx("tx3", &["pkey_put", "Asset", "red", "asset3", "300"])
+        .await;
+    let (resp, _) = peer.run_tx_to_completion("tx3").await;
+    assert_eq!(resp.status, fabric_shim::OK, "{}", resp.message);
+
+    // Partial key ["blue"] must match only the two "blue" assets, not the
+    // "red" one -- proving the composite-key prefix range actually filters
+    // by the shared attribute, not just returning everything under "Asset".
+    peer.start_tx("tx4", &["pkey_range", "Asset", "blue"]).await;
+    let (resp, _) = peer.run_tx_to_completion("tx4").await;
+    assert_eq!(resp.status, fabric_shim::OK, "{}", resp.message);
+    assert_eq!(resp.payload, b"blue|asset1,blue|asset2");
 }

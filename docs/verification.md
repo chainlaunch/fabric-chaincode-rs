@@ -103,13 +103,19 @@ cargo +nightly fuzz run composite_key_roundtrip -- -max_total_time=3600
 
 ## 4. Standard test suite
 
-- 19 tests in `fabric-shim/tests/mock_peer.rs`: an in-process mock peer (a
+- 18 tests in `fabric-shim/tests/mock_peer.rs`: an in-process mock peer (a
   real gRPC client, exactly like the Fabric peer in CCaaS mode) drives the
   handshake, ledger request/response round trips, error surfacing, range
   query pagination, interleaved concurrent transactions (proving response
   routing is correct under concurrency), panic isolation (a panicking
-  handler must not kill the connection), `GetMetadata` interception, and the
-  `#[contract]`/`#[derive(DataType)]` macro's routing and argument parsing.
+  handler must not kill the connection), `GetMetadata` interception, the
+  `#[contract]`/`#[derive(DataType)]` macro's routing and argument parsing,
+  private data (`PutState`/`GetState`/`DelState` with a collection set,
+  `GetPrivateDataHash`, `PurgePrivateData` — including that a collection is
+  isolated from world state and from other collections, not just a
+  namespaced key), and composite-key partial-range queries (that the prefix
+  filter actually separates unrelated object instances, not just that
+  `create_composite_key`/`split_composite_key` round-trip).
 - All of the above run in CI on every push and pull request — see
   [`ci.yml`](../.github/workflows/ci.yml) for the exact jobs and commands.
 
@@ -355,10 +361,15 @@ chaincode."
 ## What this does *not* claim
 
 - No independent third-party security audit has been performed.
-- Differential testing covers the `asset-transfer` reference chaincode's
-  surface (core CRUD, range queries, events, transient data, error paths) —
-  not yet private data, `invoke_chaincode`, or history queries. Extending
-  the differential harness to those is open (see `docs/spec.md` §7.4).
+- Differential testing (§1, against the real official Go chaincode) covers
+  the `asset-transfer` reference chaincode's surface (core CRUD, range
+  queries, events, transient data, error paths) — not yet private data,
+  composite keys, `invoke_chaincode`, or history queries. Private data and
+  composite-key range queries *are* covered at the protocol level (§4,
+  mock peer) — the gap is specifically the differential comparison against
+  Go's real behavior on a live network, not an absence of testing.
+  Extending the differential harness to these is open (see `docs/spec.md`
+  §7.4).
 - Fuzzing has run for short, bounded durations (seconds to low hours), not
   the sustained multi-day campaigns a hardened security-critical library
   would eventually want.
