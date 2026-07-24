@@ -75,15 +75,15 @@ impl ChaincodeStub {
 
             let signature_header =
                 pb_common::SignatureHeader::decode(header.signature_header.as_ref())?;
-            creator = signature_header.creator.to_vec();
+            creator = signature_header.creator;
 
             let payload = pb::ChaincodeProposalPayload::decode(proposal.payload.as_ref())?;
-            transient = payload
-                .transient_map
-                .into_iter()
-                .map(|(k, v)| (k, v.to_vec()))
-                .collect();
+            transient = payload.transient_map;
         }
+
+        let pb::ChaincodeInput {
+            args, decorations, ..
+        } = input;
 
         Ok(Self {
             core: Arc::new(StubCore {
@@ -92,12 +92,8 @@ impl ChaincodeStub {
                 tx_id,
                 gate: tokio::sync::Mutex::new(()),
             }),
-            args: input.args.iter().map(|a| a.to_vec()).collect(),
-            decorations: input
-                .decorations
-                .into_iter()
-                .map(|(k, v)| (k, v.to_vec()))
-                .collect(),
+            args,
+            decorations,
             signed_proposal,
             creator,
             transient,
@@ -394,7 +390,7 @@ impl ChaincodeStub {
         }
         .encode_to_vec();
         let reply = self.core.request(msg_type, payload).await?;
-        Ok(reply.payload.to_vec())
+        Ok(reply.payload)
     }
 
     async fn put_data(&self, collection: &str, key: &str, value: Vec<u8>) -> Result<()> {

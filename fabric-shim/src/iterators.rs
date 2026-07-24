@@ -33,7 +33,7 @@ impl QueryIter {
     async fn next_raw(&mut self) -> Result<Option<Vec<u8>>> {
         loop {
             if let Some(qrb) = self.batch.pop_front() {
-                return Ok(Some(qrb.result_bytes.to_vec()));
+                return Ok(Some(qrb.result_bytes));
             }
             if !self.has_more || self.closed {
                 return Ok(None);

@@ -105,7 +105,12 @@ impl Server {
             stream
         });
 
+        // The default ~64KB HTTP/2 stream window can stall large
+        // get_state/put_state payloads across extra round trips even though
+        // max_message_size allows up to 100MiB; let h2 grow the window to
+        // match observed bandwidth instead of a fixed guess.
         tonic::transport::Server::builder()
+            .http2_adaptive_window(Some(true))
             .add_service(grpc)
             .serve_with_incoming_shutdown(incoming, shutdown)
             .await

@@ -42,12 +42,12 @@ impl PeerLink {
                     "another ledger request is already in flight for tx {tx_id}"
                 )));
             }
-            pending.insert(key.clone(), tx);
+            pending.insert(key, tx);
         }
 
         let msg = new_message(msg_type, payload, channel_id, tx_id);
         if self.out.send(Ok(msg)).await.is_err() {
-            self.pending.lock().unwrap().remove(&key);
+            self.drop_pending(&(channel_id.to_string(), tx_id.to_string()));
             return Err(Error::ConnectionClosed);
         }
 

@@ -332,11 +332,15 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
                 if __args.is_empty() {
                     return fabric_shim::Response::error("no function specified");
                 }
-                let __full = ::std::string::String::from_utf8_lossy(&__args[0]).into_owned();
+                // `from_utf8_lossy` only allocates if the bytes aren't valid
+                // UTF-8 (the common case borrows, no copy). Matching directly
+                // on the resulting `&str` avoids two further String allocs
+                // that a `.into_owned()` + `.to_string()` round trip would add.
+                let __full = ::std::string::String::from_utf8_lossy(&__args[0]);
                 // Accept namespaced calls ("Contract:Function") like the
                 // Go/Node contract APIs.
-                let __function = __full.rsplit(':').next().unwrap_or(&__full).to_string();
-                match __function.as_str() {
+                let __function = __full.rsplit(':').next().unwrap_or(&__full);
+                match __function {
                     #(#arms)*
                     other => fabric_shim::Response::error(format!("unknown function {other}")),
                 }

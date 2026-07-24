@@ -231,6 +231,55 @@ runtime layer dominates total image size. Build time increased from
 ~13.5s to ~28-30s (LTO's cost); this only affects release builds used for
 deployment, not the inner dev loop.
 
+**A second optimization pass, this time on allocations in the invoke/query
+hot path**: an independent audit (Claude Fable 5, read-only, no code
+access beyond `Read`/`Grep`) of `server.rs`, `handler.rs`, `stub.rs`, and
+the `#[contract]` macro's generated dispatch, looking specifically for
+allocation/copy overhead between a peer RPC arriving and the shim's
+response going out. Applied findings:
+
+- **Redundant copies of buffers the shim already owned.** `get_data`
+  (`stub.rs`) returned `reply.payload.to_vec()` — an extra memcpy of an
+  owned `Vec<u8>` — instead of just `reply.payload`. Same pattern in the
+  range/rich-query iterator (`iterators.rs`, once per result row) and in
+  `ChaincodeStub::new` (`stub.rs`, re-copying the creator, transient map,
+  and every arg/decoration on every transaction instead of moving the
+  already-owned `Vec<u8>`s out of the decoded proposal). All four are now
+  moves, not copies.
+- **An avoidable clone building the ledger-request routing key**
+  (`handler.rs`): `PeerLink::request` built the `(channel_id, txid)` key
+  once, then cloned it again just to keep a copy for the rare
+  connection-closed error path. Now the key is moved into the pending-map
+  insert on the common path, and only rebuilt (cheaply, from the same
+  borrowed `&str`s) if the send actually fails.
+- **Two String allocations in the macro-generated dispatch**
+  (`fabric-shim-macros`): `invoke()` did
+  `from_utf8_lossy(...).into_owned()` then `.rsplit(':')...to_string()` to
+  get a `&str` to match on. `from_utf8_lossy` already borrows for free
+  when the bytes are valid UTF-8 (the normal case); matching directly on
+  the resulting `&str` needs neither allocation.
+- **HTTP/2 flow-control window**: the server left tonic's default ~64KB
+  stream window in place despite advertising a 100MiB max message size —
+  a multi-MB `get_state` response would stall on window updates across
+  extra round trips. Enabled `http2_adaptive_window(Some(true))` so the
+  window grows with observed bandwidth instead of a fixed guess.
+
+**Honest framing, not oversold**: none of this is expected to move the
+§5 benchmark's 38-43ms end-to-end numbers — CLI process spawn and the TLS
+handshake dominate that measurement, and the shim's own contribution was
+almost certainly already under a millisecond. These fixes are correct and
+free (no behavior change, same 19/19 tests pass in dev and release, clean
+clippy/fmt), and they matter for chaincode moving larger values or
+running at higher sustained throughput than this benchmark's tiny
+asset-transfer payloads exercise — but they are not a fix for a measured
+regression, because none was found. One candidate fix (deduplicating a
+second, necessary string clone in the peer-response routing path) was
+deliberately *not* made: the full `ChaincodeMessage` has to survive
+intact past that point to be delivered to the waiting caller, so avoiding
+the clone would require a bigger restructuring (a custom borrowed-key
+type) for a gain the audit itself judged unmeasurable — not worth the
+added complexity.
+
 ## What this does *not* claim
 
 - No independent third-party security audit has been performed.
