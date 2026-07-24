@@ -280,6 +280,15 @@ the clone would require a bigger restructuring (a custom borrowed-key
 type) for a gain the audit itself judged unmeasurable — not worth the
 added complexity.
 
+That prediction was checked, not just asserted: re-ran
+`./scripts/benchmark.sh 30` after these fixes. Rust: query mean 36.7ms /
+27.3 ops/s, invoke mean 42.9ms / 23.3 ops/s, idle memory 1.9MB — against
+the pre-fix numbers in the table above (37.9ms / 26.4 ops/s query, 43.2ms
+/ 23.1 ops/s invoke, 1.8MB idle memory). The difference in both directions
+is within ordinary run-to-run noise, not a trend — confirming, rather than
+just asserting, that these allocation fixes don't move a CLI-dominated
+benchmark.
+
 ## What this does *not* claim
 
 - No independent third-party security audit has been performed.
