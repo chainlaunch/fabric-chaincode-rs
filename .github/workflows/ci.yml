@@ -79,8 +79,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, not the floating `nightly` channel: that floated onto a
+      # rustc nightly with a codegen ICE compiling tokio under
+      # ASan+sancov instrumentation (unrelated to any change in this repo
+      # -- reproduced/bisected 2026-07-24, confirmed nightly-2026-07-21
+      # builds the same fuzz targets cleanly). Bump this date deliberately
+      # when there's a reason to, not by every nightly's default drift.
       - name: Install nightly Rust
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-07-21
 
       - uses: Swatinem/rust-cache@v2
         with:
